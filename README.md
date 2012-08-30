@@ -119,4 +119,14 @@ pytaf
     
     This example would replace the param 'bad_code' which was originally defined in the imported config file
     for the test named test_owner_add_private_channel_invalid_code
+
+    -------------------
+    py.test integration
+    -------------------
+
+    pytaf can be run via py.test
+  
+  invoke using long commands (--config, --test) as the short commands would be intercepted by py.test
+  example:
+     py.test --config api_config.json  --test test_pytest_integration
     
