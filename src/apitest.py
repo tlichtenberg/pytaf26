@@ -19,12 +19,16 @@ import pytaf_utils
 from apilib import ApiLib
 import json
 import logging
-from BeautifulSoup import BeautifulSoup
+from bs4 import BeautifulSoup
 
 
 def test_api(args={}):
     # required test_config fields
     settings = args['settings']
+    params = args['params']
+    var = params.get('var', 'default')
+    logging.info("var = %s" % var)
+    logging.info("settings = %s" % settings)
     url = settings['url']
 
     try:

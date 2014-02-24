@@ -31,23 +31,31 @@ pytaf
             Set the environment variable PYTAF_HOME to where you checked out the code - e.g. ~/github/pytaf26.
     
             The main module is src/pytaf.py and takes a number of command line arguments:
+                '-a', '--virtual_config_file', default=None, type='string'
                 '-b', '--browser', default=None, type='string
                 '-c', '--config_file', default='', type='string'
                 '-d', '--db', default='false', type='string'
                 '-e', '--excluded', default=None, type='string'
                 '-g', '--grid_address', default=None, type='string'
+                '-i,  '--override_settings, default=None, type='string'
                 '-m', '--modules', default=None, type='string'
+                '-o,  '--override_params, default=None, type='string'
+                '-s', '--settings', default=None, type='string'
                 '-t', '--test', default='', type='string'
                 '-u', '--url', default=None, type='string'
                 '-y', '--test_type', default='None', type='string'
                 '-z', '--loadtest_settings', default=None, type='string'
     
+                -a  --virtual_config_file is used to pass the config file in directly as a string
                 -b, --browser is used for Selenium tests to specify the browser type
                 -c, --config is required and all other arguments are optional. The config file must reside in $TEST_HOME/config
                 -d, --db defines whether to write the test results to the database. this should be set to false except for nightly regression tests
                 -e, --excluded to optionally exclude a test or tests (comma-separated list)
                 -g, --grid_address is used to override the test_host:test_port settings for the Selenium Server
+                -i, --override_settings override or add specific global settings with this comma-separated, key=value,key1=value1 string
                 -m, --modules if specified denotes a comma-separated list of modules to be included from the config file
+                -o, --override_params override or add specific test case params with this comma-separated, key=value,key1=value1 string
+                -s, --settings is used to specify a global settings config file which will override the settings of any other config file used. as a comma-separated list, the second item is a config to import
                 -t, --test is set to None (by default), in which case p_test will attempt to run all the 
                         tests in the test config file, otherwise it will attempt to run the test(s) specified 
                         (multiple tests are set with a comma-separated list of their names)
@@ -97,6 +105,16 @@ pytaf
     
     The entire web_admin_config.json file will be loaded, but its 'browser' and 
     'testrail_testsuite' settings will be overridden by those in the web_admin_ie9_config.json file
+    
+    Another way to do this is with the "-s" command-line option, which takes a comma-separated
+    list of config files. The first in the list has the highest priority in overriding settings,
+    and subsequent config file have priority, in order, for overriding tests and their params
+    For example:
+    	python pytaf.py -s global_settings.json,another_config.json,base_config.json -t test_api
+    	
+    -------------------------------
+    Excluding and overriding tests 
+    -------------------------------
     
     Instead of using the -e command-line option to exclude certain tests from the 
     test run, the override config file can contain an 'additional_excludes' section 

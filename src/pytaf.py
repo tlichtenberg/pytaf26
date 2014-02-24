@@ -1,5 +1,5 @@
 '''
-    test driver
+    general purpose python test driver
     
     Copyright (C) 2012  Tom Lichtenberg
 
@@ -57,23 +57,34 @@ class Pytaf:
     def setup(self, args):
         # Parse command line options
         parser = PassThroughOptionParser()
+        parser.add_option('-a', '--virtual_config_file', default=None, type='string')
         parser.add_option('-b', '--browser', default=None, type='string')
         parser.add_option('-c', '--config_file', default=None, type='string')
         parser.add_option('-d', '--db', default="false", type='string')
         parser.add_option('-e', '--excluded', default=None, type='string')
         parser.add_option('-g', '--grid_address', default=None, type='string')
+        parser.add_option('-i', '--override_settings', default=None, type='string') # override global settings with this comma-separated, key:value string
         parser.add_option('-l', '--logfile', default=None, type='string')
         parser.add_option('-m', '--modules', default=None, type='string')
+        parser.add_option('-o', '--override_params', default=None, type='string') # override specific test params with this comma-separated, key:value string
+        parser.add_option('-s', '--settings', default=None, type='string') 
         parser.add_option('-t', '--test', default=None, type='string')
         parser.add_option('-u', '--url', default=None, type='string')
         parser.add_option('-y', '--test_type', default=None, type='string')
         parser.add_option('-z', '--loadtest_settings', default=None,
-                                                       type='string')
+                                                       type='string')    
         options, args_out = parser.parse_args(args)
+        self.override_params = options.override_params
+        self.override_settings = options.override_settings
+        global_settings = options.settings
+        global_settings_config = None
+        config = {}
+        sub_configs = []
+        test_overrides = {}
 
-        if options.config_file == None:
-            print('-c (--config_file) is required')
-            sys.exit(-1)
+        if options.config_file == None and options.virtual_config_file == None and options.settings == None:
+            print '-c (--config_file) or -a (--virtual_config_file)  or -s (--settings) is required'
+            sys.exit(2)
 
         if options.logfile != None:
             ''' redirect stdout to the logfile '''
@@ -88,51 +99,132 @@ class Pytaf:
             excluded_list = None
 
         ''' load the config file '''
+        # optional global settings config file
+        # can be a comma-separated list, in which case the global_settings config is the first item
+        # and any number of config files can be added to it, merging fields as needed
+        # global settings override all sub_config settings, but are overridden by command-line -i overrides
+        # tests['includes'] and tests['excludes'] in sub_configs are simply added together
+        # an exclude in any sub_config will override any include of the same test elsewhere in the merged configs        
+        if global_settings != None:           
+            gsettings = global_settings.split(",")
+            config_path = os.getenv('PYTAFHOME') + os.sep + "config" + os.sep
+            #print gsettings
+            # first import the "global" or top-most, settings file
+            f = open("%s%s" % (config_path, gsettings[0]), 'r').read()
+            global_settings_config = json.loads(f)
+            test_overrides = global_settings_config.get('test_overrides', {})
+            #print test_overrides
+            #print global_settings_config
+            for i in range(1, len(gsettings)):
+                sub_configs.append(gsettings[i])
+        
+        # handle the virtual config file
         try:
-            config_path = os.getenv('PYTAF_HOME') + os.sep + "config" + os.sep
-            f = open("%s%s" % (config_path, options.config_file), 'r').read()
-            config = json.loads(f)
+            if options.virtual_config_file != None:
+                #print options.virtual_config_file
+                config = json.loads(options.virtual_config_file)
+                db_config = {}
+            elif options.config_file != None:
+                config_path = os.getenv('PYTAF_HOME') + os.sep + "config" + os.sep
+                f = open("%s%s" % (config_path,options.config_file), 'r').read()
+                config = json.loads(f)           
             
             # allow for the possibility of nested config files
-            test_overrides = {}
+            new_settings = {}
+            # allow for an import from override config files
             config_to_import = config.get('import', None)
             if config_to_import != None:
-                top_config = config
-                f = open("%s%s" % (config_path, config_to_import), 'r').read()           
-                imported_config = json.loads(f)
-                # let any original config 'settings' override the imported config's settings by merging the dictionaries 
-                new_settings = dict(imported_config['settings'].items() + top_config['settings'].items())
-                # the new, merged config's settings
-                config['settings'] = new_settings
-                config['tests'] = imported_config['tests']
-
-                # the params dictionary of individual tests can be overridden, e.g.
-                # "test_overrides":
-                #   {
-                #     "test_owner_add_private_channel_invalid_code": { "bad_code" : "AAAAACHECKITOUT" }
-                #   }
-                try:
-                    test_overrides = top_config.get('test_overrides', {})
-                    print('test_overrides = %s' % test_overrides)
-                except Exception as inst:
-                    print('eh ? %s' % inst)
-                
-                # additional excludes can be added to the base config file's excluded tests list, e.g:
-                #"additional_excludes":
-                #   [  
-                #      "test_owner_manage_subscriptions"
-                #   ]
-                additional_excludes = top_config.get('additional_excludes', [])
-                if excluded_list == None and len(additional_excludes) > 0:
-                    excluded_list = additional_excludes
-                else:
-                    for excluded in additional_excludes:
-                        excluded_list.append(excluded)                                 
+                sub_configs.append(config_to_import)
+             
+            if global_settings_config != None and len(sub_configs) > 0:
+                top_config = global_settings_config
+            else:
+                top_config = config # {} at this point
+            
+            # import each sub_config and merge       
+            if len(sub_configs) > 0:    
+                for sub_config in sub_configs:
+                    #print "sub_config file = %s" % sub_config
+                    f = open("%s%s" % (config_path, sub_config), 'r').read()           
+                    imported_config = json.loads(f)
+                    # let any original config 'settings' override the imported config's settings by merging the dictionaries 
+                    if imported_config.has_key('settings'):
+                        new_settings = dict(imported_config['settings'].items() + top_config['settings'].items())
+                    
+                    # if there's a global settings config, it will trump all settings
+                    if global_settings_config != None:
+                        new_settings = dict(new_settings.items() + global_settings_config['settings'].items())
+                    
+                    # the new, merged config's settings
+                    config['settings'] = new_settings
+                    try:
+                        config['settings']['config_file'] += "," + sub_config
+                    except: # if not already there, initialize it
+                        config['settings']['config_file'] = gsettings[0] + "," + sub_config
+                    top_config['settings'] = config['settings'] # update this as well
+                        
+                    if imported_config.has_key('tests'):
+                        #print "merge the tests includes sections"
+                        if config.has_key('tests') == False:
+                            config['tests'] = {}
+                        try:
+                            config['tests']['includes'] += imported_config['tests']['includes']
+                        except:                          
+                            config['tests']['includes'] = imported_config['tests']['includes']
+                       
+                        if imported_config['tests'].has_key('excludes'):  
+                            for exclude_element in imported_config['tests']['excludes']:
+                                for method in exclude_element['methods']:
+                                    #print "adding to exclude list: %s" % method['name']
+                                    excluded_list.append(method['name'])
+    
+                    # the params dictionary of individual tests can be overridden, e.g.
+                    # "test_overrides":
+                    #   {
+                    #     "test_owner_add_private_channel_invalid_code": { "bad_code" : "AAAAACHECKITOUT" }
+                    #   }
+                    test_overrides = dict(list(test_overrides.items()) + list(imported_config.get("test_overrides", {}).items()))
+                    #print test_overrides
+                    
+                    # additional excludes can be added to the base config file's excluded tests list, e.g:
+                    #"additional_excludes":
+                    #   [  
+                    #      "test_owner_manage_subscriptions"
+                    #   ]
+                    #print "look for additional excludes"
+                    additional_excludes = top_config.get('additional_excludes', [])
+                    #print "additional excludes = %s" % additional_excludes
+                    if len(excluded_list) == 0 and len(additional_excludes) > 0:
+                        #print "set excluded_list to %s" % excluded_list
+                        excluded_list = additional_excludes
+                    else:
+                        #print "else?"
+                        for j in range (len(additional_excludes)):
+                            excluded_list.append(additional_excludes[j]) 
+                            #print "excluded_list now = %s" % excluded_list
+                            
+                    #print "config = %s" % config
+                          
+                else: # if there's no overrides config but there is a global_settings config
+                    # if there's a global settings config, it will trump all settings
+                    if global_settings_config != None:
+                        #print 'global settings override'
+                        #print config['settings']
+                        if config.has_key('settings'):
+                            new_settings = dict(config['settings'].items() + global_settings_config['settings'].items())
+                            config['settings'] = new_settings     
+                        else:
+                            config['settings'] = global_settings_config['settings']
+                    #print "config = %s" % config
+                                   
         except:
-            print(pytaf_utils.formatExceptionInfo())
-            print("problem with config file %s%s" %
-                  (config_path, options.config_file))
-            sys.exit()
+            print pytaf_utils.formatExceptionInfo()
+            if len(sub_configs) > 0:
+                cf = gsettings
+            else:
+                cf = options.config_file
+            print "JSON problem in a config file: %s" % cf
+            sys.exit(2)   
 
         config['settings']['config_file'] = options.config_file
         
@@ -220,8 +312,9 @@ class Pytaf:
                         logging.fatal("could not find params for test %s" % test)
                         sys.exit()
                     else:
-                        if test_overrides.get(test, None):
-                            params = dict(params.items() + test_overrides[test].items())
+                        #if test_overrides.get(test, None):
+                        #    params = dict(params.items() + test_overrides[test].items())
+                        params, settings = self.do_overrides(params, settings, test, test_overrides, self.override_settings, self.override_params)                                             
                         status = self.do_test(mapped_modules, settings,
                                               test, params)
                         if status == True:
@@ -238,8 +331,9 @@ class Pytaf:
                 if self.test_excluded(test, excluded_list) == False:
                     params = pytaf_utils.get_params(config, test)
                     if params != None:
-                        if test_overrides.get(test, None):
-                            params = dict(params.items() + test_overrides[test].items())
+                        #if test_overrides.get(test, None):
+                        #    params = dict(params.items() + test_overrides[test].items())
+                        params, settings = self.do_overrides(params, settings, test, test_overrides, self.override_settings, self.override_params)                             
                         status = self.do_test(mapped_modules, settings,
                                               test, params)
                         if status == True:
@@ -272,6 +366,31 @@ class Pytaf:
                 if test == e:
                     return True
         return False
+    
+    def do_overrides(self, params, settings, test, test_overrides, override_settings, override_params):
+        '''
+           test_overrides are test-case specific params from an override config file
+           override_params are passed in on the command-line using the -o command and can override test_overrides
+           as well as parameters defined in the root config file for the test case
+        '''
+        if test_overrides.get(test, None): # integrate override config, if any
+            params = dict(params.items() + test_overrides[test].items())
+        if override_params != None: # override_param overrides anything from an overrides config as well as any test params
+            o_params = override_params.split(',')
+            for override_param in o_params:
+                override = override_param.split(":")
+                key = override[0]
+                value = override[1]
+                params[key] = value  
+        if override_settings != None: 
+            o_settings = override_settings.split(',')
+            for override_setting in o_settings:
+                override = override_setting.split(":")
+                key = override[0]
+                value = override[1]
+                settings[key] = value  
+        #print "do_override, settings = %s" % settings
+        return params, settings
 
     def do_test(self, modules, settings, test, params):
         result = (False, "error")
